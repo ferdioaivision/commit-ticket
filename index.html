@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Commit Ticket — your GitHub activity, itemized</title>
+<meta name="description" content="Enter a public GitHub username. Get a real activity percentile printed as a shareable commit ticket, built from live public data." />
+<meta property="og:title" content="Commit Ticket — your GitHub activity, itemized" />
+<meta property="og:description" content="A real percentile, not a guess. Printed as a ticket from live public GitHub data." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Special+Elite&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  :root {
+    --ink: #07090b;
+    --ticket: #14171c;
+    --ticket-2: #1a1e24;
+    --hairline: #2a2f37;
+    --hairline-soft: #1d2127;
+    --text-hi: #f0f3f6;
+    --text-lo: #7d8590;
+    --text-faint: #444b54;
+
+    --add: #3fb950;
+    --add-soft: rgba(63, 185, 80, 0.13);
+    --del: #f85149;
+    --del-soft: rgba(248, 81, 73, 0.13);
+    --amber: #ffa657;
+    --amber-soft: rgba(255, 166, 87, 0.13);
+
+    /* real GitHub contribution-graph colors, dark mode */
+    --g0: #161b22;
+    --g1: #0e4429;
+    --g2: #006d32;
+    --g3: #26a641;
+    --g4: #39d353;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+
+  body {
+    background: var(--ink);
+    background-image:
+      radial-gradient(ellipse 760px 460px at 16% -6%, rgba(255, 166, 87, 0.08), transparent),
+      radial-gradient(ellipse 620px 420px at 94% 8%, rgba(63, 185, 80, 0.07), transparent);
+    color: var(--text-hi);
+    font-family: 'Fira Code', ui-monospace, monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 52px 18px 64px;
+  }
+
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap;
+  }
+  :focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; border-radius: 4px; }
+
+  /* ---------- HERO / FORM ---------- */
+  .eyebrow {
+    font-size: 13px; color: var(--text-lo); margin-bottom: 18px;
+    display: flex; align-items: center; gap: 1px;
+  }
+  .eyebrow .prompt { color: var(--amber); margin-right: 8px; }
+  .cursor {
+    display: inline-block; width: 8px; height: 14px; background: var(--amber);
+    margin-left: 6px; animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .cursor { animation: none; opacity: 1; } }
+
+  h1 {
+    font-weight: 700; font-size: clamp(28px, 5.4vw, 48px);
+    line-height: 1.1; letter-spacing: -0.01em;
+    margin: 0 0 14px; text-align: center;
+  }
+  h1 span { color: var(--amber); }
+
+  .sub {
+    color: var(--text-lo); font-size: 14.5px; line-height: 1.6;
+    text-align: center; max-width: 460px; margin: 0 0 32px;
+  }
+
+  .input-row { display: flex; gap: 10px; width: 100%; max-width: 420px; margin-bottom: 10px; }
+  .at {
+    color: var(--text-faint); background: var(--ticket);
+    border: 1px solid var(--hairline); border-right: none; border-radius: 8px 0 0 8px;
+    padding: 0 14px; display: flex; align-items: center; font-size: 15px;
+  }
+  #username {
+    flex: 1; min-width: 0; background: var(--ticket);
+    border: 1px solid var(--hairline); border-left: none; color: var(--text-hi);
+    font-family: 'Fira Code', monospace; font-size: 15px; padding: 14px;
+    border-radius: 0 8px 8px 0; outline: none;
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  #username:focus { border-color: var(--amber); box-shadow: 0 0 0 3px var(--amber-soft); }
+  #username::placeholder { color: var(--text-faint); }
+
+  #generateBtn {
+    background: var(--amber); color: #1a0f02; border: none;
+    font-family: 'Fira Code', monospace; font-weight: 700; font-size: 14px;
+    padding: 0 20px; border-radius: 8px; cursor: pointer; white-space: nowrap;
+    transition: filter .12s ease, transform .12s ease;
+  }
+  #generateBtn:hover { filter: brightness(1.1); transform: translateY(-1px); }
+  #generateBtn:active { transform: translateY(0); }
+  #generateBtn:disabled { opacity: 0.5; cursor: progress; transform: none; }
+
+  .hint { font-size: 11px; color: var(--text-faint); margin-bottom: 34px; text-align: center; }
+  .status {
+    font-size: 13px; color: var(--del); min-height: 20px; margin-bottom: 16px;
+    text-align: center; max-width: 420px;
+  }
+
+  /* ---------- TICKET CARD ---------- */
+  #card-wrap { display: none; flex-direction: column; align-items: center; }
+  #card-wrap.visible { display: flex; }
+
+  .card {
+    position: relative;
+    width: 400px; max-width: 92vw;
+    background: var(--ticket);
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    padding: 22px 22px 0;
+    box-shadow: 0 36px 70px -28px rgba(0,0,0,0.65);
+    opacity: 0; transform: translateY(10px) scale(0.98);
+    transition: opacity .5s ease, transform .5s cubic-bezier(.16,1,.3,1);
+    overflow: hidden;
+  }
+  .card.in { opacity: 1; transform: translateY(0) scale(1); }
+
+  /* The export card is captured off-screen and never gets the .in trigger
+     class — force it visible always, independent of the preview's reveal animation. */
+  .export-card { opacity: 1 !important; transform: none !important; }
+
+  /* subtle paper grain, preview only */
+  .card::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none; opacity: 0.05; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='90'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .regmark { position: absolute; width: 12px; height: 12px; opacity: 0.3; z-index: 2; }
+  .regmark::before, .regmark::after { content: ''; position: absolute; background: var(--amber); }
+  .regmark::before { width: 100%; height: 1px; top: 50%; left: 0; }
+  .regmark::after { width: 1px; height: 100%; left: 50%; top: 0; }
+  .regmark.tl { top: 10px; left: 10px; }
+  .regmark.br { bottom: 10px; right: 10px; }
+
+  .card-eyebrow {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 18px; font-size: 11px;
+  }
+  .card-eyebrow .wordmark { color: var(--amber); font-weight: 700; letter-spacing: 0.06em; }
+  .card-eyebrow .window { color: var(--text-faint); letter-spacing: 0.04em; text-transform: uppercase; }
+
+  .card-top { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+  .avatar {
+    width: 50px; height: 50px; border-radius: 9px;
+    border: 2px solid var(--amber); background: var(--ticket-2); object-fit: cover; flex-shrink: 0;
+  }
+  .who { line-height: 1.35; min-width: 0; }
+  .who .name { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .who .login { font-size: 11.5px; color: var(--text-lo); }
+  .issued { margin-left: auto; text-align: right; font-size: 9.5px; color: var(--text-faint); line-height: 1.5; flex-shrink: 0; }
+  .issued b { display: block; color: var(--text-lo); font-size: 10px; }
+
+  .perf {
+    border-top: 1px dashed var(--hairline); margin: 18px -22px 16px; position: relative;
+  }
+  .perf::before, .perf::after {
+    content: ''; position: absolute; top: -7px; width: 14px; height: 14px; border-radius: 50%;
+    background: var(--ink);
+  }
+  .perf::before { left: -7px; }
+  .perf::after { right: -7px; }
+
+  .hero { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 4px 0 2px; position: relative; }
+  .ring-wrap { position: relative; width: 124px; height: 124px; }
+  .ring-wrap svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .ring-track { fill: none; stroke: var(--hairline); stroke-width: 9; }
+  .ring-fill { fill: none; stroke: var(--amber); stroke-width: 9; stroke-linecap: round; }
+  .hero-num {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 2px;
+    font-weight: 700;
+  }
+  .hero-num .n { font-size: 34px; color: var(--text-hi); line-height: 1; }
+  .hero-num .s { font-size: 16px; color: var(--text-lo); }
+  .hero-tag { font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint); margin-top: 10px; }
+
+  .stamp {
+    position: absolute; top: -6px; right: 4px;
+    transform: rotate(-9deg);
+    font-family: 'Special Elite', monospace;
+    color: var(--amber);
+    border: 2px solid var(--amber);
+    border-radius: 5px;
+    padding: 5px 8px;
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+    text-align: center;
+    line-height: 1.3;
+    opacity: 0.92;
+    text-shadow: 1px 1px 0 rgba(255, 166, 87, 0.3);
+  }
+  .stamp::before {
+    content: ''; position: absolute; inset: -3px; border: 1px solid var(--amber);
+    border-radius: 7px; opacity: 0.4;
+  }
+
+  .headline {
+    font-size: 12.5px; text-align: center; color: var(--text-lo);
+    margin: 16px 2px 18px;
+  }
+  .headline b { font-weight: 700; color: var(--text-hi); }
+  .headline .gt { color: var(--amber); margin-right: 4px; }
+
+  .diffstats { display: flex; flex-direction: column; gap: 7px; margin-bottom: 18px; }
+  .diffline {
+    display: flex; align-items: baseline; gap: 9px;
+    font-size: 12.5px; padding: 7px 10px; border-radius: 5px;
+    background: rgba(255,255,255,0.02);
+  }
+  .diffline.add { border-left: 2px solid var(--add); }
+  .diffline.del { border-left: 2px solid var(--del); }
+  .diffline.amber { border-left: 2px solid var(--amber); }
+  .diffline .sym { width: 13px; flex-shrink: 0; text-align: center; font-weight: 700; }
+  .diffline.add .sym { color: var(--add); }
+  .diffline.del .sym { color: var(--del); }
+  .diffline.amber .sym { color: var(--amber); }
+  .diffline .val { font-weight: 700; color: var(--text-hi); white-space: nowrap; }
+  .diffline .lbl { color: var(--text-lo); font-size: 11px; }
+
+  .heatcap { display: flex; justify-content: space-between; font-size: 9.5px; color: var(--text-faint); letter-spacing: 0.05em; margin-bottom: 6px; text-transform: uppercase; }
+  .heatmap { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 1fr); gap: 3px; height: 52px; margin-bottom: 18px; }
+  .heatmap div { border-radius: 2px; }
+
+  .stub {
+    border-top: 1px dashed var(--hairline);
+    margin: 0 -22px; padding: 14px 22px 18px;
+    display: flex; align-items: flex-end; justify-content: space-between; gap: 12px;
+    background: var(--ticket-2);
+  }
+  .barcode { display: flex; align-items: flex-end; gap: 1.5px; height: 26px; margin-bottom: 6px; }
+  .barcode div { background: var(--text-lo); width: 2px; }
+  .serial { font-size: 9.5px; color: var(--text-faint); letter-spacing: 0.04em; }
+  .stub-right { text-align: right; font-size: 10px; color: var(--text-faint); line-height: 1.7; }
+  .stub-right b { color: var(--text-lo); }
+
+  /* ---------- ACTIONS ---------- */
+  .actions { display: flex; gap: 10px; margin-top: 22px; }
+  .actions button {
+    font-family: 'Fira Code', monospace; font-size: 13px; font-weight: 600;
+    padding: 11px 18px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--hairline); background: var(--ticket); color: var(--text-hi);
+    transition: filter .12s ease;
+  }
+  .actions button.primary { background: var(--amber); border-color: var(--amber); color: #1a0f02; }
+  .actions button:hover { filter: brightness(1.1); }
+  .actions button:disabled { opacity: 0.55; cursor: progress; }
+
+  /* ---------- PAGE FOOTER ---------- */
+  footer { margin-top: 50px; max-width: 460px; text-align: center; }
+  footer .credit { font-size: 11.5px; color: var(--text-faint); margin-bottom: 10px; }
+  footer .credit a { color: var(--text-lo); text-decoration: none; border-bottom: 1px dotted var(--text-faint); }
+  footer .credit a:hover { color: var(--amber); border-color: var(--amber); }
+  footer .method { font-size: 10px; line-height: 1.6; color: #2c3036; }
+
+  /* ---------- EXPORT STAGE (off-screen, 1080x1920 capture target) ---------- */
+  .export-stage { position: fixed; top: 0; left: -10000px; }
+  .export-frame {
+    width: 1080px; height: 1920px;
+    background:
+      radial-gradient(ellipse 900px 700px at 14% -6%, rgba(255,166,87,0.10), transparent),
+      radial-gradient(ellipse 760px 620px at 92% 102%, rgba(63,185,80,0.09), transparent),
+      var(--ink);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    position: relative; font-family: 'Fira Code', monospace;
+  }
+  .export-card { width: 860px; padding: 48px 48px 0; border-radius: 22px; }
+  .export-card::after { content: none; }
+  .export-card .regmark { width: 20px; height: 20px; }
+  .export-card .regmark.tl { top: 18px; left: 18px; }
+  .export-card .regmark.br { bottom: 18px; right: 18px; }
+  .export-card .card-eyebrow { margin-bottom: 32px; font-size: 18px; }
+  .export-card .card-top { gap: 22px; }
+  .export-card .avatar { width: 92px; height: 92px; border-radius: 16px; border-width: 3px; }
+  .export-card .who .name { font-size: 27px; max-width: 540px; }
+  .export-card .who .login { font-size: 18px; }
+  .export-card .issued { font-size: 15px; }
+  .export-card .issued b { font-size: 16px; }
+  .export-card .perf { margin: 34px -48px 30px; }
+  .export-card .perf::before, .export-card .perf::after { width: 24px; height: 24px; top: -12px; }
+  .export-card .perf::before { left: -12px; }
+  .export-card .perf::after { right: -12px; }
+  .export-card .ring-wrap { width: 256px; height: 256px; }
+  .export-card .ring-track, .export-card .ring-fill { stroke-width: 16; }
+  .export-card .hero-num .n { font-size: 70px; }
+  .export-card .hero-num .s { font-size: 32px; }
+  .export-card .hero-tag { font-size: 16px; margin-top: 18px; letter-spacing: 0.14em; }
+  .export-card .stamp { top: -8px; right: 30px; font-size: 21px; padding: 10px 16px; border-width: 3px; border-radius: 9px; }
+  .export-card .stamp::before { inset: -5px; border-radius: 12px; }
+  .export-card .headline { font-size: 24px; margin: 32px 6px 34px; }
+  .export-card .diffstats { gap: 14px; margin-bottom: 34px; }
+  .export-card .diffline { font-size: 23px; padding: 16px 20px; border-radius: 9px; gap: 16px; }
+  .export-card .diffline .sym { width: 22px; }
+  .export-card .diffline .lbl { font-size: 19px; }
+  .export-card .heatcap { font-size: 16px; margin-bottom: 12px; }
+  .export-card .heatmap { height: 100px; gap: 6px; margin-bottom: 34px; }
+  .export-card .heatmap div { border-radius: 4px; }
+  .export-card .stub { margin: 0 -48px; padding: 28px 48px 36px; border-radius: 0 0 19px 19px; }
+  .export-card .barcode { height: 46px; gap: 2.5px; margin-bottom: 10px; }
+  .export-card .barcode div { width: 3.5px; }
+  .export-card .serial { font-size: 16px; }
+  .export-card .stub-right { font-size: 17px; line-height: 1.8; }
+
+  .export-watermark {
+    margin-top: 36px; display: flex; align-items: center; justify-content: center; gap: 14px;
+    font-size: 19px; color: var(--text-lo); letter-spacing: 0.02em;
+  }
+  .export-watermark .handle { color: var(--amber); font-weight: 700; }
+  .export-watermark .dot { color: var(--text-faint); }
+
+  @media (prefers-reduced-motion: reduce) { .card { transition: none; } }
+</style>
+</head>
+<body>
+
+  <div class="eyebrow"><span class="prompt">$</span>git wrapped --live<span class="cursor" aria-hidden="true"></span></div>
+  <h1>Your commits,<br><span>itemized.</span></h1>
+  <p class="sub">Drop a public GitHub username. We pull the last 90 days of public activity and print a ticket — ranked against real public profiles, using the percentile method behind the open-source project <strong>github-readme-stats</strong>.</p>
+
+  <label for="username" class="visually-hidden">GitHub username</label>
+  <div class="input-row">
+    <span class="at" aria-hidden="true">@</span>
+    <input id="username" type="text" placeholder="github-username" autocomplete="off" spellcheck="false" />
+    <button id="generateBtn">Print ticket →</button>
+  </div>
+  <div class="hint">no sign-in · nothing stored · public github api only</div>
+
+  <div class="status" id="status" role="status" aria-live="polite"></div>
+
+  <div id="card-wrap">
+    <div class="card" id="card">
+      <div class="regmark tl" aria-hidden="true"></div>
+      <div class="regmark br" aria-hidden="true"></div>
+      <div class="card-eyebrow">
+        <span class="wordmark">COMMIT TICKET</span>
+        <span class="window">90d window</span>
+      </div>
+      <div class="card-top">
+        <img class="avatar" id="prev-avatar" src="" alt="" crossorigin="anonymous" />
+        <div class="who">
+          <div class="name" id="prev-name"></div>
+          <div class="login" id="prev-login"></div>
+        </div>
+        <div class="issued"><b id="prev-age">—</b>on github</div>
+      </div>
+
+      <div class="perf"></div>
+
+      <div class="hero">
+        <div class="ring-wrap">
+          <svg viewBox="0 0 120 120">
+            <circle class="ring-track" cx="60" cy="60" r="52" data-r="52" />
+            <circle class="ring-fill" id="prev-ring" cx="60" cy="60" r="52" data-r="52" />
+          </svg>
+          <div class="hero-num"><span class="n" id="prev-pct">0</span><span class="s">%</span></div>
+        </div>
+        <div class="hero-tag">activity percentile</div>
+        <div class="stamp" id="prev-stamp">—</div>
+      </div>
+
+      <div class="headline" id="prev-headline"><span class="gt">&gt;</span>loading…</div>
+
+      <div class="diffstats">
+        <div class="diffline add"><span class="sym">+</span><span class="val" id="prev-commits">—</span><span class="lbl">commits shipped</span></div>
+        <div class="diffline add"><span class="sym">+</span><span class="val" id="prev-streak">—</span><span class="lbl">day streak</span></div>
+        <div class="diffline amber"><span class="sym">*</span><span class="val" id="prev-lang">—</span><span class="lbl">top language</span></div>
+        <div class="diffline add"><span class="sym">+</span><span class="val" id="prev-stars">—</span><span class="lbl">stars earned</span></div>
+        <div class="diffline del"><span class="sym">-</span><span class="val" id="prev-idle">—</span><span class="lbl">days idle, longest gap</span></div>
+      </div>
+
+      <div class="heatcap"><span>activity · 90d</span><span id="prev-repos">— repos</span></div>
+      <div class="heatmap" id="prev-heatmap"></div>
+
+      <div class="stub">
+        <div>
+          <div class="barcode" id="prev-barcode"></div>
+          <div class="serial" id="prev-serial">SN-000000</div>
+        </div>
+        <div class="stub-right">get your own<br><b>ferdio.dev/wrapped</b></div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="primary" id="downloadBtn">↓ Save ticket</button>
+      <button id="againBtn">↺ Scan another</button>
+    </div>
+    <div class="hint" style="margin-top:10px;">downloads 3 files: story image, ticket PNG, ticket PDF</div>
+  </div>
+
+  <footer>
+    <div class="credit">Built by <a href="https://ferdio.dev" target="_blank" rel="noopener">Ferdio Ai Vision</a> · <a href="#" id="repoLink">view source on GitHub</a></div>
+    <div class="method">Percentile estimated from public commits, pull requests, issues, stars and followers over the last 90 days, weighted with the exponential / log-normal ranking method popularized by github-readme-stats. Not an official GitHub statistic.</div>
+  </footer>
+
+  <!-- Off-screen 1080x1920 export composition, captured by html2canvas on download -->
+  <div class="export-stage" aria-hidden="true">
+    <div class="export-frame" id="exportFrame">
+      <div class="export-card card" id="exportCard">
+        <div class="regmark tl" aria-hidden="true"></div>
+        <div class="regmark br" aria-hidden="true"></div>
+        <div class="card-eyebrow">
+          <span class="wordmark">COMMIT TICKET</span>
+          <span class="window">90d window</span>
+        </div>
+        <div class="card-top">
+          <img class="avatar" id="exp-avatar" src="" alt="" crossorigin="anonymous" />
+          <div class="who">
+            <div class="name" id="exp-name"></div>
+            <div class="login" id="exp-login"></div>
+          </div>
+          <div class="issued"><b id="exp-age">—</b>on github</div>
+        </div>
+
+        <div class="perf"></div>
+
+        <div class="hero">
+          <div class="ring-wrap">
+            <svg viewBox="0 0 120 120">
+              <circle class="ring-track" cx="60" cy="60" r="50" data-r="50" />
+              <circle class="ring-fill" id="exp-ring" cx="60" cy="60" r="50" data-r="50" />
+            </svg>
+            <div class="hero-num"><span class="n" id="exp-pct">0</span><span class="s">%</span></div>
+          </div>
+          <div class="hero-tag">activity percentile</div>
+          <div class="stamp" id="exp-stamp">—</div>
+        </div>
+
+        <div class="headline" id="exp-headline"></div>
+
+        <div class="diffstats">
+          <div class="diffline add"><span class="sym">+</span><span class="val" id="exp-commits">—</span><span class="lbl">commits shipped</span></div>
+          <div class="diffline add"><span class="sym">+</span><span class="val" id="exp-streak">—</span><span class="lbl">day streak</span></div>
+          <div class="diffline amber"><span class="sym">*</span><span class="val" id="exp-lang">—</span><span class="lbl">top language</span></div>
+          <div class="diffline add"><span class="sym">+</span><span class="val" id="exp-stars">—</span><span class="lbl">stars earned</span></div>
+          <div class="diffline del"><span class="sym">-</span><span class="val" id="exp-idle">—</span><span class="lbl">days idle, longest gap</span></div>
+        </div>
+
+        <div class="heatcap"><span>activity · 90d</span><span id="exp-repos">— repos</span></div>
+        <div class="heatmap" id="exp-heatmap"></div>
+
+        <div class="stub">
+          <div>
+            <div class="barcode" id="exp-barcode"></div>
+            <div class="serial" id="exp-serial">SN-000000</div>
+          </div>
+          <div class="stub-right">get your own<br><b>ferdio.dev/wrapped</b></div>
+        </div>
+      </div>
+      <div class="export-watermark">
+        <span class="handle" id="wm-handle">@ferdioaivision</span>
+        <span class="dot">·</span>
+        <span>get yours → ferdio.dev/wrapped</span>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  // ---- Brand config — swap these two lines for your real handle + repo ----
+  const BRAND = { handle: '@ferdioaivision', url: 'https://ferdio.dev' };
+  const REPO_URL = 'https://github.com/your-username/github-wrapped';
+  document.getElementById('wm-handle').textContent = BRAND.handle;
+
+  // GitHub's unauthenticated API caps every visitor's network at 60 requests/hour.
+  // Deploy the included Cloudflare Worker proxy (see github-proxy-worker.js) and
+  // point API_BASE at it to raise that to 5000/hour, shared across all visitors.
+  // Until then this talks to api.github.com directly — works out of the box,
+  // just easier to exhaust on a shared wifi/VPN or while testing repeatedly.
+  const API_BASE = 'https://api.github.com';
+
+  const usernameInput = document.getElementById('username');
+  const generateBtn = document.getElementById('generateBtn');
+  const statusEl = document.getElementById('status');
+  const cardWrap = document.getElementById('card-wrap');
+  const card = document.getElementById('card');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const againBtn = document.getElementById('againBtn');
+
+  function setStatus(msg, isError) {
+    statusEl.textContent = msg || '';
+    statusEl.style.color = isError ? 'var(--del)' : 'var(--text-lo)';
+  }
+
+  function prefersReducedMotion() {
+    return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }
+
+  // ---------------- In-session cache ----------------
+  // In-memory only — nothing written to disk/localStorage, so the "nothing
+  // stored" promise in the hint text stays true. This just stops the same
+  // lookup (re-testing the same username, hitting "again" twice, filming
+  // retakes) from burning quota on repeat calls within one page session.
+  const CACHE_TTL_MS = 10 * 60 * 1000;
+  const resultCache = new Map();
+  let lastRateInfo = null; // { remaining, reset } from the most recent GitHub response
+
+  function getCached(username) {
+    const hit = resultCache.get(username.toLowerCase());
+    if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.data;
+    return null;
+  }
+  function setCached(username, data) {
+    resultCache.set(username.toLowerCase(), { data, at: Date.now() });
+  }
+
+
+  // ---------------- GitHub API ----------------
+
+  class ApiError extends Error {
+    constructor(type, info) { super(type); this.type = type; this.info = info || {}; }
+  }
+
+  async function fetchJSON(url) {
+    const res = await fetch(url, { headers: { 'Accept': 'application/vnd.github+json' } });
+    const remaining = res.headers.get('x-ratelimit-remaining');
+    const reset = res.headers.get('x-ratelimit-reset');
+    if (remaining !== null) lastRateInfo = { remaining: Number(remaining), reset: Number(reset) };
+    if (res.status === 404) throw new ApiError('NOT_FOUND');
+    if (res.status === 403) throw new ApiError('RATE_LIMIT', { reset: Number(reset) });
+    if (!res.ok) throw new ApiError('API_ERROR');
+    return res.json();
+  }
+
+  // GitHub's public events endpoint caps out around 300 events (~90 days) regardless
+  // of pagination — we fetch up to that ceiling for the fullest possible picture.
+  async function fetchAllEvents(username) {
+    let all = [];
+    for (let page = 1; page <= 3; page++) {
+      const batch = await fetchJSON(`${API_BASE}/users/${encodeURIComponent(username)}/events/public?per_page=100&page=${page}`);
+      all = all.concat(batch);
+      if (batch.length < 100) break;
+    }
+    return all;
+  }
+
+  function formatResetTime(resetEpochSeconds) {
+    if (!resetEpochSeconds) return null;
+    const ms = resetEpochSeconds * 1000;
+    const minutes = Math.max(1, Math.ceil((ms - Date.now()) / 60000));
+    const clock = new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return { minutes, clock };
+  }
+
+  // ---------------- Stats computation ----------------
+
+  function dayKey(iso) { return iso.slice(0, 10); }
+
+  function computeActivity(events) {
+    const pushEvents = events.filter(e => e.type === 'PushEvent');
+    const dayCounts = new Map();
+    let totalCommits = 0;
+
+    pushEvents.forEach(e => {
+      const n = (e.payload && e.payload.commits) ? e.payload.commits.length : 1;
+      totalCommits += n;
+      const k = dayKey(e.created_at);
+      dayCounts.set(k, (dayCounts.get(k) || 0) + n);
+    });
+
+    const activeDays = Array.from(dayCounts.keys()).sort();
+    let longestStreak = 0, currentStreak = 0, prevDate = null;
+    activeDays.forEach(dStr => {
+      const day = new Date(dStr + 'T00:00:00Z');
+      if (prevDate) {
+        const diff = Math.round((day - prevDate) / 86400000);
+        currentStreak = diff === 1 ? currentStreak + 1 : 1;
+      } else {
+        currentStreak = 1;
+      }
+      longestStreak = Math.max(longestStreak, currentStreak);
+      prevDate = day;
+    });
+
+    const prs = events.filter(e => e.type === 'PullRequestEvent' && e.payload && e.payload.action === 'opened').length;
+    const issues = events.filter(e => e.type === 'IssuesEvent' && e.payload && e.payload.action === 'opened').length;
+
+    return { totalCommits, longestStreak, dayCounts, prs, issues };
+  }
+
+  function buildHeatmapCells(dayCounts, days) {
+    const cells = [];
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(today);
+      d.setUTCDate(d.getUTCDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      cells.push(dayCounts.get(key) || 0);
+    }
+    return cells;
+  }
+
+  function levelFor(count) {
+    if (count <= 0) return 0;
+    if (count <= 2) return 1;
+    if (count <= 5) return 2;
+    if (count <= 9) return 3;
+    return 4;
+  }
+
+  function renderHeatmap(container, dayCounts, days) {
+    container.innerHTML = '';
+    const cells = buildHeatmapCells(dayCounts, days);
+    const tones = ['var(--g0)', 'var(--g1)', 'var(--g2)', 'var(--g3)', 'var(--g4)'];
+    cells.forEach(count => {
+      const cell = document.createElement('div');
+      cell.style.background = tones[levelFor(count)];
+      container.appendChild(cell);
+    });
+  }
+
+  // Longest run of fully inactive days inside the 90-day window — the one
+  // "negative" stat, styled like a diff deletion. Real, computed, not flavor text.
+  function computeLongestGap(dayCounts, days) {
+    const cells = buildHeatmapCells(dayCounts, days);
+    let longest = 0, current = 0;
+    cells.forEach(c => {
+      if (c === 0) { current++; longest = Math.max(longest, current); }
+      else current = 0;
+    });
+    return longest;
+  }
+
+  function computeNonForkRepos(repos) { return repos.filter(r => !r.fork); }
+
+  function computeTopLanguage(repos) {
+    const counts = {};
+    computeNonForkRepos(repos).forEach(r => { if (r.language) counts[r.language] = (counts[r.language] || 0) + 1; });
+    let top = null, max = 0;
+    for (const lang in counts) if (counts[lang] > max) { max = counts[lang]; top = lang; }
+    return top || '—';
+  }
+
+  function computeStars(repos) {
+    return computeNonForkRepos(repos).reduce((sum, r) => sum + (r.stargazers_count || 0), 0);
+  }
+
+  function ordinalAge(dateStr) {
+    const d = new Date(dateStr);
+    const days = Math.floor((new Date() - d) / 86400000);
+    if (days < 365) return days + 'd';
+    return (days / 365).toFixed(1) + 'y';
+  }
+
+  // ---------------- Deterministic ticket barcode + serial ----------------
+  // Purely decorative/identity flavor, seeded from the username — never
+  // presented as a metric, just a printed-ticket detail unique per person.
+
+  function hashString(str) {
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
+    return Math.abs(h);
+  }
+
+  function serialFor(username) {
+    return 'SN-' + hashString(username).toString(16).toUpperCase().padStart(6, '0').slice(0, 6);
+  }
+
+  function renderBarcode(container, username, count) {
+    container.innerHTML = '';
+    let seed = hashString(username) || 1;
+    for (let i = 0; i < count; i++) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      const bar = document.createElement('div');
+      bar.style.height = (35 + (seed % 65)) + '%';
+      container.appendChild(bar);
+    }
+  }
+
+  // ---------------- Percentile (real, sourced methodology) ----------------
+  // Adapted from github-readme-stats' published ranking method: a weighted
+  // combination of exponential CDFs (commits, PRs, issues) and log-normal
+  // CDFs (stars, followers). Medians for commits/PRs/issues are scaled down
+  // from their published annual baselines to match our 90-day window.
+  // Source: github.com/anuraghazra/github-readme-stats (src/calculateRank.js)
+
+  function expCdf(x) { return 1 - Math.pow(2, -x); }
+  function logNormalCdf(x) { return x / (1 + x); }
+
+  function calcPercentile({ commits, prs, issues, stars, followers }) {
+    const W = { commits: 2, prs: 3, issues: 1, stars: 4, followers: 1 };
+    const MED = { commits: 65, prs: 12, issues: 6, stars: 50, followers: 10 };
+    const totalWeight = W.commits + W.prs + W.issues + W.stars + W.followers;
+
+    const avg = (
+      W.commits * expCdf(commits / MED.commits) +
+      W.prs * expCdf(prs / MED.prs) +
+      W.issues * expCdf(issues / MED.issues) +
+      W.stars * logNormalCdf(stars / MED.stars) +
+      W.followers * logNormalCdf(followers / MED.followers)
+    ) / totalWeight;
+
+    return Math.max(0, Math.min(100, avg * 100));
+  }
+
+  function fmtPct(pct) { return pct < 1 ? '<1' : Math.round(pct).toString(); }
+
+  function rankTitleFor(pct) {
+    if (pct < 1) return 'FIRST\nCOMMIT';
+    if (pct < 25) return 'WARMING\nUP';
+    if (pct < 50) return 'STEADY\nHANDS';
+    if (pct < 75) return 'AHEAD OF\nQUEUE';
+    if (pct < 95) return 'HEAVY\nSHIPPER';
+    return 'TOP TIER\nSHIP';
+  }
+
+  function headlineFor(pct) {
+    const display = fmtPct(pct);
+    return `<span class="gt">&gt;</span>ranked ahead of <b>${display}%</b> of public profiles, last 90 days`;
+  }
+
+  // ---------------- Rendering ----------------
+
+  function setRingProgress(circle, pct) {
+    const r = parseFloat(circle.getAttribute('data-r'));
+    const c = 2 * Math.PI * r;
+    circle.style.strokeDasharray = c.toFixed(2);
+    circle.style.strokeDashoffset = (c * (1 - pct / 100)).toFixed(2);
+  }
+
+  function animateHero(prefix, targetPct) {
+    const numEl = document.getElementById(`${prefix}-pct`);
+    const ringEl = document.getElementById(`${prefix}-ring`);
+    if (prefersReducedMotion()) {
+      numEl.textContent = fmtPct(targetPct);
+      setRingProgress(ringEl, targetPct);
+      return;
+    }
+    const duration = 900;
+    const start = performance.now();
+    function tick(now) {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const val = targetPct * eased;
+      numEl.textContent = fmtPct(val);
+      setRingProgress(ringEl, val);
+      if (t < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  function paint(prefix, data) {
+    document.getElementById(`${prefix}-avatar`).src = data.avatarUrl;
+    document.getElementById(`${prefix}-avatar`).alt = data.login;
+    document.getElementById(`${prefix}-name`).textContent = data.name || data.login;
+    document.getElementById(`${prefix}-login`).textContent = '@' + data.login;
+    document.getElementById(`${prefix}-age`).textContent = data.age;
+    document.getElementById(`${prefix}-stamp`).innerHTML = rankTitleFor(data.percentile).replace('\n', '<br>');
+    document.getElementById(`${prefix}-headline`).innerHTML = headlineFor(data.percentile);
+    document.getElementById(`${prefix}-commits`).textContent = data.commits;
+    document.getElementById(`${prefix}-streak`).textContent = data.streak + (data.streak === 1 ? 'd' : 'd');
+    document.getElementById(`${prefix}-lang`).textContent = data.topLanguage;
+    document.getElementById(`${prefix}-stars`).textContent = data.stars;
+    document.getElementById(`${prefix}-idle`).textContent = data.longestGap;
+    document.getElementById(`${prefix}-repos`).textContent = data.publicRepos + ' repos';
+    document.getElementById(`${prefix}-serial`).textContent = data.serial;
+    renderHeatmap(document.getElementById(`${prefix}-heatmap`), data.dayCounts, 91);
+    renderBarcode(document.getElementById(`${prefix}-barcode`), data.login, prefix === 'exp' ? 38 : 26);
+    animateHero(prefix, data.percentile);
+  }
+
+  // ---------------- Main flow ----------------
+
+  async function generate() {
+    const username = usernameInput.value.trim().replace(/^@/, '');
+    if (!username) { setStatus('Enter a GitHub username first.', true); return; }
+
+    generateBtn.disabled = true;
+    card.classList.remove('in');
+    cardWrap.classList.remove('visible');
+
+    const cached = getCached(username);
+    if (cached) {
+      paint('prev', cached);
+      paint('exp', cached);
+      cardWrap.classList.add('visible');
+      requestAnimationFrame(() => card.classList.add('in'));
+      setStatus('Loaded from this session\u2019s cache — no API call spent.');
+      generateBtn.disabled = false;
+      return;
+    }
+
+    setStatus('Fetching public GitHub data…');
+
+    try {
+      const [user, repos, events] = await Promise.all([
+        fetchJSON(`${API_BASE}/users/${encodeURIComponent(username)}`),
+        fetchJSON(`${API_BASE}/users/${encodeURIComponent(username)}/repos?per_page=100&sort=updated`),
+        fetchAllEvents(username)
+      ]);
+
+      const activity = computeActivity(events);
+      const stars = computeStars(repos);
+      const topLanguage = computeTopLanguage(repos);
+      const percentile = calcPercentile({
+        commits: activity.totalCommits,
+        prs: activity.prs,
+        issues: activity.issues,
+        stars,
+        followers: user.followers || 0
+      });
+
+      const data = {
+        login: user.login,
+        name: user.name,
+        avatarUrl: user.avatar_url,
+        commits: activity.totalCommits,
+        streak: activity.longestStreak,
+        longestGap: computeLongestGap(activity.dayCounts, 91),
+        dayCounts: activity.dayCounts,
+        topLanguage,
+        stars,
+        publicRepos: user.public_repos,
+        age: ordinalAge(user.created_at),
+        serial: serialFor(user.login),
+        percentile
+      };
+
+      setCached(username, data);
+      paint('prev', data);
+      paint('exp', data);
+
+      cardWrap.classList.add('visible');
+      requestAnimationFrame(() => card.classList.add('in'));
+
+      if (lastRateInfo && lastRateInfo.remaining <= 5) {
+        setStatus(`Heads up: only ${lastRateInfo.remaining} GitHub lookups left on this network this hour.`);
+      } else {
+        setStatus('');
+      }
+    } catch (err) {
+      if (err.type === 'NOT_FOUND') {
+        setStatus(`No public GitHub account found for "${username}".`, true);
+      } else if (err.type === 'RATE_LIMIT') {
+        const reset = formatResetTime(err.info.reset);
+        setStatus(
+          reset
+            ? `GitHub API limit reached for your network (60/hour, shared by everyone on it). Resets in ~${reset.minutes} min, around ${reset.clock}.`
+            : 'GitHub API rate limit reached. Try again in a few minutes.',
+          true
+        );
+      } else {
+        setStatus('Something went wrong. Check your connection and try again.', true);
+      }
+    } finally {
+      generateBtn.disabled = false;
+    }
+  }
+
+  generateBtn.addEventListener('click', generate);
+  usernameInput.addEventListener('keydown', e => { if (e.key === 'Enter') generate(); });
+
+  function triggerDownload(href, filename) {
+    const link = document.createElement('a');
+    link.download = filename;
+    link.href = href;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
+  function wait(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+  downloadBtn.addEventListener('click', async () => {
+    downloadBtn.disabled = true;
+    const originalLabel = downloadBtn.textContent;
+    const username = usernameInput.value.trim().replace(/^@/, '') || 'wrapped';
+
+    try {
+      // 1/3 — full 1080x1920 story frame (ticket + watermark on the ambient background)
+      downloadBtn.textContent = 'Preparing 1/3…';
+      const frame = document.getElementById('exportFrame');
+      const storyCanvas = await html2canvas(frame, {
+        backgroundColor: null, scale: 1, useCORS: true,
+        width: 1080, height: 1920, windowWidth: 1080, windowHeight: 1920
+      });
+      triggerDownload(storyCanvas.toDataURL('image/png'), `commit-ticket-${username}-story.png`);
+      await wait(350); // browsers can flag rapid-fire downloads as a popup-style abuse pattern
+
+      // 2/3 — the ticket itself, tightly cropped, transparent corners, no frame/watermark
+      downloadBtn.textContent = 'Preparing 2/3…';
+      const ticketEl = document.getElementById('exportCard');
+      const ticketCanvas = await html2canvas(ticketEl, {
+        backgroundColor: null, scale: 2, useCORS: true,
+        windowWidth: 1080, windowHeight: 1920
+      });
+      triggerDownload(ticketCanvas.toDataURL('image/png'), `commit-ticket-${username}.png`);
+      await wait(350);
+
+      // 3/3 — same ticket, as a single-page PDF sized exactly to it (print/save formally)
+      downloadBtn.textContent = 'Preparing 3/3…';
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({
+        orientation: ticketCanvas.height >= ticketCanvas.width ? 'portrait' : 'landscape',
+        unit: 'px',
+        format: [ticketCanvas.width, ticketCanvas.height]
+      });
+      pdf.addImage(ticketCanvas.toDataURL('image/png'), 'PNG', 0, 0, ticketCanvas.width, ticketCanvas.height, undefined, 'FAST');
+      pdf.save(`commit-ticket-${username}.pdf`);
+
+      setStatus('Saved: story image, ticket PNG and ticket PDF.');
+    } catch (err) {
+      setStatus('Could not generate one of the files. Try again.', true);
+    } finally {
+      downloadBtn.disabled = false;
+      downloadBtn.textContent = originalLabel;
+    }
+  });
+
+  againBtn.addEventListener('click', () => {
+    card.classList.remove('in');
+    cardWrap.classList.remove('visible');
+    usernameInput.focus();
+    usernameInput.select();
+  });
+
+  // Swap REPO_URL above once published, this just wires the footer link to it.
+  document.getElementById('repoLink').addEventListener('click', e => {
+    e.preventDefault();
+    window.open(REPO_URL, '_blank');
+  });
+})();
+</script>
+</body>
+</html>
