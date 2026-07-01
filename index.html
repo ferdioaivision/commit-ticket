@@ -253,6 +253,12 @@
   .stub-right { text-align: right; font-size: 10px; color: var(--text-faint); line-height: 1.7; }
   .stub-right b { color: var(--text-lo); }
 
+  .genstamp {
+    text-align: center; font-size: 9px; letter-spacing: 0.03em;
+    color: var(--text-faint); margin: 0 -22px; padding: 8px 22px 12px;
+    background: var(--ticket-2);
+  }
+
   /* ---------- ACTIONS ---------- */
   .actions { display: flex; gap: 10px; margin-top: 22px; }
   .actions button {
@@ -270,7 +276,7 @@
   footer .credit { font-size: 11.5px; color: var(--text-faint); margin-bottom: 10px; }
   footer .credit a { color: var(--text-lo); text-decoration: none; border-bottom: 1px dotted var(--text-faint); }
   footer .credit a:hover { color: var(--amber); border-color: var(--amber); }
-  footer .method { font-size: 10px; line-height: 1.6; color: #2c3036; }
+  footer .method { font-size: 10px; line-height: 1.6; color: var(--text-lo); }
 
   /* ---------- EXPORT STAGE (off-screen, 1080x1920 capture target) ---------- */
   .export-stage { position: fixed; top: 0; left: -10000px; }
@@ -314,11 +320,12 @@
   .export-card .heatcap { font-size: 16px; margin-bottom: 12px; }
   .export-card .heatmap { height: 100px; gap: 6px; margin-bottom: 34px; }
   .export-card .heatmap div { border-radius: 4px; }
-  .export-card .stub { margin: 0 -48px; padding: 28px 48px 36px; border-radius: 0 0 19px 19px; }
+  .export-card .stub { margin: 0 -48px; padding: 28px 48px 36px; }
   .export-card .barcode { height: 46px; gap: 2.5px; margin-bottom: 10px; }
   .export-card .barcode div { width: 3.5px; }
   .export-card .serial { font-size: 16px; }
   .export-card .stub-right { font-size: 17px; line-height: 1.8; }
+  .export-card .genstamp { font-size: 14px; margin: 0 -48px; padding: 14px 48px 22px; border-radius: 0 0 19px 19px; }
 
   .export-watermark {
     margin-top: 36px; display: flex; align-items: center; justify-content: center; gap: 14px;
@@ -397,6 +404,8 @@
         </div>
         <div class="stub-right">get your own<br><b>commit-ticket.vercel.app</b></div>
       </div>
+
+      <div class="genstamp" id="prev-genstamp">generated —</div>
     </div>
 
     <div class="actions">
@@ -462,13 +471,15 @@
             <div class="barcode" id="exp-barcode"></div>
             <div class="serial" id="exp-serial">SN-000000</div>
           </div>
-          <div class="stub-right">get your own<br><b>ferdioaivision.dev/wrapped</b></div>
+          <div class="stub-right">get your own<br><b>commit-ticket.vercel.app</b></div>
         </div>
+
+        <div class="genstamp" id="exp-genstamp">generated —</div>
       </div>
       <div class="export-watermark">
         <span class="handle" id="wm-handle">@ferdioaivision</span>
         <span class="dot">·</span>
-        <span>get yours → ferdioaivision.dev/wrapped</span>
+        <span>get yours → commit-ticket.vercel.app</span>
       </div>
     </div>
   </div>
@@ -477,7 +488,7 @@
 (function () {
   // ---- Brand config — swap these two lines for your real handle + repo ----
   const BRAND = { handle: '@ferdioaivision', url: 'https://commit-ticket.vercel.app' };
-  const REPO_URL = 'https://github.com/ferdioaivision/github-wrapped';
+  const REPO_URL = 'https://github.com/ferdioaivision/commit-ticket';
   document.getElementById('wm-handle').textContent = BRAND.handle;
 
   // GitHub's unauthenticated API caps every visitor's network at 60 requests/hour.
@@ -661,6 +672,15 @@
     return (days / 365).toFixed(1) + 'y';
   }
 
+  // Short, unambiguous stamp for when the ticket itself was generated —
+  // shown small on the ticket so a re-shared/re-downloaded copy is dated.
+  function generatedStamp() {
+    const now = new Date();
+    const datePart = now.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: '2-digit' });
+    const timePart = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    return `generated ${datePart}, ${timePart}`;
+  }
+
   // ---------------- Deterministic ticket barcode + serial ----------------
   // Purely decorative/identity flavor, seeded from the username — never
   // presented as a metric, just a printed-ticket detail unique per person.
@@ -773,6 +793,7 @@
     document.getElementById(`${prefix}-idle`).textContent = data.longestGap;
     document.getElementById(`${prefix}-repos`).textContent = data.publicRepos + ' repos';
     document.getElementById(`${prefix}-serial`).textContent = data.serial;
+    document.getElementById(`${prefix}-genstamp`).textContent = data.generatedAt;
     renderHeatmap(document.getElementById(`${prefix}-heatmap`), data.dayCounts, 91);
     renderBarcode(document.getElementById(`${prefix}-barcode`), data.login, prefix === 'exp' ? 38 : 26);
     animateHero(prefix, data.percentile);
@@ -790,8 +811,12 @@
 
     const cached = getCached(username);
     if (cached) {
-      paint('prev', cached);
-      paint('exp', cached);
+      // Re-stamp the generation time even on a cache hit — the ticket
+      // reflects when it was produced for the viewer, not when the
+      // underlying GitHub data was fetched.
+      const restamped = { ...cached, generatedAt: generatedStamp() };
+      paint('prev', restamped);
+      paint('exp', restamped);
       cardWrap.classList.add('visible');
       requestAnimationFrame(() => card.classList.add('in'));
       setStatus('Loaded from this session\u2019s cache — no API call spent.');
@@ -832,7 +857,8 @@
         publicRepos: user.public_repos,
         age: ordinalAge(user.created_at),
         serial: serialFor(user.login),
-        percentile
+        percentile,
+        generatedAt: generatedStamp()
       };
 
       setCached(username, data);
