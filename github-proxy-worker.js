@@ -48,7 +48,7 @@ const ALLOWED_PREFIXES = ['/users/'];
 // Set to '*' temporarily while testing locally from a file:// page, then
 // tighten it once Commit Ticket is deployed to a real domain.
 const ALLOWED_ORIGINS = [
-  'https://ferdioaivision.dev',
+  'https://commit-ticket.vercel.app',
   'http://localhost:8000',
   '*' // TODO: remove this line once deployed — keeping it open defeats the point of locking origins
 ];
