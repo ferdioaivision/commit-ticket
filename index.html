@@ -522,7 +522,6 @@
   // retakes) from burning quota on repeat calls within one page session.
   const CACHE_TTL_MS = 10 * 60 * 1000;
   const resultCache = new Map();
-  let lastRateInfo = null; // { remaining, reset } from the most recent GitHub response
 
   function getCached(username) {
     const hit = resultCache.get(username.toLowerCase());
@@ -541,26 +540,28 @@
   }
 
   async function fetchJSON(url) {
-    const res = await fetch(url, { headers: { 'Accept': 'application/vnd.github+json' } });
-    const remaining = res.headers.get('x-ratelimit-remaining');
+    let res;
+    try {
+      res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    } catch (e) {
+      // Only genuine network failures (offline, DNS, blocked by CORS) end up here.
+      throw new ApiError('NETWORK');
+    }
     const reset = res.headers.get('x-ratelimit-reset');
-    if (remaining !== null) lastRateInfo = { remaining: Number(remaining), reset: Number(reset) };
     if (res.status === 404) throw new ApiError('NOT_FOUND');
+    if (res.status === 401) throw new ApiError('AUTH');
     if (res.status === 403) throw new ApiError('RATE_LIMIT', { reset: Number(reset) });
     if (!res.ok) throw new ApiError('API_ERROR');
     return res.json();
   }
 
-  // GitHub's public events endpoint caps out around 300 events (~90 days) regardless
-  // of pagination — we fetch up to that ceiling for the fullest possible picture.
-  async function fetchAllEvents(username) {
-    let all = [];
-    for (let page = 1; page <= 3; page++) {
-      const batch = await fetchJSON(`${API_BASE}/users/${encodeURIComponent(username)}/events/public?per_page=100&page=${page}`);
-      all = all.concat(batch);
-      if (batch.length < 100) break;
-    }
-    return all;
+  // One request to our proxy, which queries GitHub's GraphQL API (the same source
+  // as the contribution graph on a GitHub profile) and returns the real per-day
+  // counts for the last 90 days plus totals, stars and top language over ALL repos.
+  // The old REST "events" endpoint is capped at the 300 most recent events, so for
+  // an active developer it only covered a few days and the rest looked empty.
+  function fetchContrib(username) {
+    return fetchJSON(`${API_BASE}/contrib/${encodeURIComponent(username)}`);
   }
 
   function formatResetTime(resetEpochSeconds) {
@@ -575,36 +576,29 @@
 
   function dayKey(iso) { return iso.slice(0, 10); }
 
-  function computeActivity(events) {
-    const pushEvents = events.filter(e => e.type === 'PushEvent');
+  // Turns the proxy's [{date, count}] list into a Map keyed by UTC date.
+  function buildDayCounts(days) {
     const dayCounts = new Map();
-    let totalCommits = 0;
+    (days || []).forEach(d => dayCounts.set(d.date, d.count));
+    return dayCounts;
+  }
 
-    pushEvents.forEach(e => {
-      const n = (e.payload && e.payload.commits) ? e.payload.commits.length : 1;
-      totalCommits += n;
-      const k = dayKey(e.created_at);
-      dayCounts.set(k, (dayCounts.get(k) || 0) + n);
-    });
-
-    const activeDays = Array.from(dayCounts.keys()).sort();
-    let longestStreak = 0, currentStreak = 0, prevDate = null;
+  // Longest run of consecutive days with at least one contribution.
+  function computeLongestStreak(dayCounts) {
+    const activeDays = Array.from(dayCounts.keys()).filter(k => dayCounts.get(k) > 0).sort();
+    let longest = 0, current = 0, prevDate = null;
     activeDays.forEach(dStr => {
       const day = new Date(dStr + 'T00:00:00Z');
       if (prevDate) {
         const diff = Math.round((day - prevDate) / 86400000);
-        currentStreak = diff === 1 ? currentStreak + 1 : 1;
+        current = diff === 1 ? current + 1 : 1;
       } else {
-        currentStreak = 1;
+        current = 1;
       }
-      longestStreak = Math.max(longestStreak, currentStreak);
+      longest = Math.max(longest, current);
       prevDate = day;
     });
-
-    const prs = events.filter(e => e.type === 'PullRequestEvent' && e.payload && e.payload.action === 'opened').length;
-    const issues = events.filter(e => e.type === 'IssuesEvent' && e.payload && e.payload.action === 'opened').length;
-
-    return { totalCommits, longestStreak, dayCounts, prs, issues };
+    return longest;
   }
 
   function buildHeatmapCells(dayCounts, days) {
@@ -649,20 +643,6 @@
       else current = 0;
     });
     return longest;
-  }
-
-  function computeNonForkRepos(repos) { return repos.filter(r => !r.fork); }
-
-  function computeTopLanguage(repos) {
-    const counts = {};
-    computeNonForkRepos(repos).forEach(r => { if (r.language) counts[r.language] = (counts[r.language] || 0) + 1; });
-    let top = null, max = 0;
-    for (const lang in counts) if (counts[lang] > max) { max = counts[lang]; top = lang; }
-    return top || '—';
-  }
-
-  function computeStars(repos) {
-    return computeNonForkRepos(repos).reduce((sum, r) => sum + (r.stargazers_count || 0), 0);
   }
 
   function ordinalAge(dateStr) {
@@ -786,10 +766,10 @@
     document.getElementById(`${prefix}-age`).textContent = data.age;
     document.getElementById(`${prefix}-stamp`).innerHTML = rankTitleFor(data.percentile).replace('\n', '<br>');
     document.getElementById(`${prefix}-headline`).innerHTML = headlineFor(data.percentile);
-    document.getElementById(`${prefix}-commits`).textContent = data.commits;
-    document.getElementById(`${prefix}-streak`).textContent = data.streak + (data.streak === 1 ? 'd' : 'd');
+    document.getElementById(`${prefix}-commits`).textContent = data.commits.toLocaleString('en-US');
+    document.getElementById(`${prefix}-streak`).textContent = data.streak + 'd';
     document.getElementById(`${prefix}-lang`).textContent = data.topLanguage;
-    document.getElementById(`${prefix}-stars`).textContent = data.stars;
+    document.getElementById(`${prefix}-stars`).textContent = data.stars.toLocaleString('en-US');
     document.getElementById(`${prefix}-idle`).textContent = data.longestGap;
     document.getElementById(`${prefix}-repos`).textContent = data.publicRepos + ' repos';
     document.getElementById(`${prefix}-serial`).textContent = data.serial;
@@ -819,7 +799,7 @@
       paint('exp', restamped);
       cardWrap.classList.add('visible');
       requestAnimationFrame(() => card.classList.add('in'));
-      setStatus('Loaded from this session\u2019s cache — no API call spent.');
+      setStatus('Loaded from this session\u2019s cache.');
       generateBtn.disabled = false;
       return;
     }
@@ -827,36 +807,30 @@
     setStatus('Fetching public GitHub data…');
 
     try {
-      const [user, repos, events] = await Promise.all([
-        fetchJSON(`${API_BASE}/users/${encodeURIComponent(username)}`),
-        fetchJSON(`${API_BASE}/users/${encodeURIComponent(username)}/repos?per_page=100&sort=updated`),
-        fetchAllEvents(username)
-      ]);
+      const c = await fetchContrib(username);
 
-      const activity = computeActivity(events);
-      const stars = computeStars(repos);
-      const topLanguage = computeTopLanguage(repos);
+      const dayCounts = buildDayCounts(c.days);
       const percentile = calcPercentile({
-        commits: activity.totalCommits,
-        prs: activity.prs,
-        issues: activity.issues,
-        stars,
-        followers: user.followers || 0
+        commits: c.commits,
+        prs: c.prs,
+        issues: c.issues,
+        stars: c.stars,
+        followers: c.followers || 0
       });
 
       const data = {
-        login: user.login,
-        name: user.name,
-        avatarUrl: user.avatar_url,
-        commits: activity.totalCommits,
-        streak: activity.longestStreak,
-        longestGap: computeLongestGap(activity.dayCounts, 91),
-        dayCounts: activity.dayCounts,
-        topLanguage,
-        stars,
-        publicRepos: user.public_repos,
-        age: ordinalAge(user.created_at),
-        serial: serialFor(user.login),
+        login: c.login,
+        name: c.name,
+        avatarUrl: c.avatarUrl,
+        commits: c.commits,
+        streak: computeLongestStreak(dayCounts),
+        longestGap: computeLongestGap(dayCounts, 91),
+        dayCounts,
+        topLanguage: c.topLanguage || '—',
+        stars: c.stars,
+        publicRepos: c.publicRepos,
+        age: ordinalAge(c.createdAt),
+        serial: serialFor(c.login),
         percentile,
         generatedAt: generatedStamp()
       };
@@ -868,11 +842,7 @@
       cardWrap.classList.add('visible');
       requestAnimationFrame(() => card.classList.add('in'));
 
-      if (lastRateInfo && lastRateInfo.remaining <= 5) {
-        setStatus(`Heads up: only ${lastRateInfo.remaining} GitHub lookups left on this network this hour.`);
-      } else {
-        setStatus('');
-      }
+      setStatus('');
     } catch (err) {
       if (err.type === 'NOT_FOUND') {
         setStatus(`No public GitHub account found for "${username}".`, true);
@@ -880,12 +850,18 @@
         const reset = formatResetTime(err.info.reset);
         setStatus(
           reset
-            ? `GitHub API limit reached for your network (60/hour, shared by everyone on it). Resets in ~${reset.minutes} min, around ${reset.clock}.`
-            : 'GitHub API rate limit reached. Try again in a few minutes.',
+            ? `Commit Ticket has hit its GitHub request limit for now. Try again in ~${reset.minutes} min (around ${reset.clock}).`
+            : 'Commit Ticket has hit its GitHub request limit for now. Try again in a few minutes.',
           true
         );
+      } else if (err.type === 'AUTH') {
+        setStatus('The server could not authenticate with GitHub (invalid token). Please try again later.', true);
+      } else if (err.type === 'API_ERROR') {
+        setStatus('GitHub or the proxy returned an error. Please try again in a moment.', true);
+      } else if (err.type === 'NETWORK') {
+        setStatus('Could not reach the Commit Ticket server. Check your connection and try again.', true);
       } else {
-        setStatus('Something went wrong. Check your connection and try again.', true);
+        setStatus('Unexpected error: ' + (err && err.message ? err.message : 'unknown') + '.', true);
       }
     } finally {
       generateBtn.disabled = false;
