@@ -14,7 +14,7 @@ Drop a public GitHub username → get a shareable, printable "receipt" of your l
 
 <br />
 
-<img src="docs/screenshots/landing.png" alt="Commit Ticket landing page" width="640" />
+<img width="1236" height="620" alt="image" src="https://github.com/user-attachments/assets/19c9e68f-f0a5-40ba-8b9c-83981ea97c4e" />
 
 </div>
 
@@ -27,7 +27,8 @@ Commit Ticket turns a public GitHub profile into a **ticket**: an activity perce
 No account, no OAuth, no database. Type a username, print the ticket.
 
 <div align="center">
-<img src="docs/screenshots/ticket.png" alt="Example Commit Ticket" width="360" />
+<img width="1720" height="2916" alt="commit-ticket-ferdioaivision" src="https://github.com/user-attachments/assets/5b2f34ac-e736-4ad5-9af5-f89e951ffc3b" />
+
 </div>
 
 ## What's on the ticket
