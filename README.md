@@ -27,7 +27,8 @@ Commit Ticket turns a public GitHub profile into a **ticket**: an activity perce
 No account, no OAuth, no database. Type a username, print the ticket.
 
 <div align="center">
-<img width="1720" height="2916" alt="commit-ticket-ferdioaivision" src="https://github.com/user-attachments/assets/5b2f34ac-e736-4ad5-9af5-f89e951ffc3b" />
+<img width="1720" height="2916" alt="commit-ticket-ferdioaivision" src="https://github.com/user-attachments/assets/8cd14fe9-b312-41c2-9aaf-b2e0ad54bee7" />
+
 
 </div>
 
