@@ -9,8 +9,10 @@
  *   GET /contrib/<username>   (NEW — what the ticket uses)
  *     Queries GitHub's GraphQL API (the same source as the contribution
  *     graph on a GitHub profile) and returns ONE compact JSON document:
- *     real per-day contribution counts for the last 90 days, real totals
- *     (commits / PRs / issues / reviews), stars and top language computed
+ *     real per-day contribution counts for the last 90 UTC days (today
+ *     included), real totals (commits / PRs / issues / reviews), the count
+ *     of private contributions (`restricted`, only non-zero when the user
+ *     shows them on their profile), stars and top language computed
  *     over ALL public non-fork repos (paginated), followers, account age.
  *
  *     The old approach (the REST "events" endpoint) only ever returns the
@@ -18,12 +20,25 @@
  *     and the rest of the 90-day window looked empty. GraphQL has no such
  *     cap.
  *
+ *   GET /verify?p=<proof>     (NEW — ticket authenticity check)
+ *     Every /contrib answer carries a `proof`: the ticket's key numbers
+ *     signed with HMAC-SHA256 using a secret only this Worker knows. The
+ *     QR code on a downloaded ticket points to the site with that proof;
+ *     the site calls /verify, which answers { valid: true, ticket: {...} }
+ *     with the ORIGINAL signed numbers, or { valid: false } if the proof
+ *     was forged or altered. Nobody can edit a number and keep a valid QR.
+ *
  *   GET /users/...            (legacy passthrough, kept for compatibility)
  *
- * SETUP (unchanged)
+ * SETUP
  *   Worker -> Settings -> Variables and Secrets -> secret GITHUB_TOKEN
  *   = a GitHub PAT (classic) with NO scopes ticked. GraphQL requires an
  *   authenticated request, and the token only lives on the Worker.
+ *
+ *   NEW: add a second secret TICKET_SECRET = any long random string
+ *   (40+ characters). Never change it afterwards, or every ticket issued
+ *   before the change stops verifying. Without it the site still works,
+ *   it just issues tickets without a proof.
  *
  * CACHE
  *   Each /contrib/<username> answer is cached at Cloudflare's edge for
@@ -93,6 +108,7 @@ query($login: String!, $from: DateTime!, $to: DateTime!) {
     }
     contributionsCollection(from: $from, to: $to) {
       totalCommitContributions
+      restrictedContributionsCount
       totalPullRequestContributions
       totalIssueContributions
       totalPullRequestReviewContributions
@@ -156,9 +172,126 @@ function summarizeRepos(nodes) {
   return { stars, langCounts };
 }
 
+// Longest run of consecutive days with at least one contribution.
+function computeLongestStreak(days) {
+  const active = days.filter(d => d.count > 0).map(d => d.date).sort();
+  let longest = 0, current = 0, prev = null;
+  for (const dateStr of active) {
+    const day = new Date(dateStr + 'T00:00:00Z');
+    current = prev && Math.round((day - prev) / 86400000) === 1 ? current + 1 : 1;
+    longest = Math.max(longest, current);
+    prev = day;
+  }
+  return longest;
+}
+
+// Longest run of fully inactive days inside the WINDOW_DAYS UTC days ending today.
+function computeLongestGap(days, now) {
+  const counts = new Map(days.map(d => [d.date, d.count]));
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  let longest = 0, current = 0;
+  for (let i = WINDOW_DAYS - 1; i >= 0; i--) {
+    const key = new Date(today.getTime() - i * 86400000).toISOString().slice(0, 10);
+    if ((counts.get(key) || 0) === 0) { current++; longest = Math.max(longest, current); }
+    else current = 0;
+  }
+  return longest;
+}
+
+// ---------------- Ticket proof (signed snapshot) ----------------
+// proof = <fields joined by "."> + "." + <first 12 bytes of HMAC-SHA256>.
+// Numbers are base36 to keep the QR code small. Fields (version 2):
+//   version . login . issuedAt . commits . restricted . prs . issues . total . stars . followers . streak . gap . language
+// Version 1 proofs (no restricted / total) are still accepted when verifying.
+
+const PROOF_VERSION = '2';
+const SIG_BYTES = 12;
+const textEncoder = new TextEncoder();
+
+function b64url(bytes) {
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function hmac(secret, text) {
+  const key = await crypto.subtle.importKey('raw', textEncoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, textEncoder.encode(text)));
+  return b64url(sig.slice(0, SIG_BYTES));
+}
+
+function safeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+const n36 = n => Math.max(0, Math.floor(Number(n) || 0)).toString(36);
+
+async function signTicket(d, secret) {
+  const body = [
+    PROOF_VERSION, d.login, n36(d.generatedAt), n36(d.commits), n36(d.restricted), n36(d.prs), n36(d.issues),
+    n36(d.totalContributions), n36(d.stars), n36(d.followers), n36(d.streak), n36(d.longestGap),
+    encodeURIComponent(d.topLanguage || '').replace(/\./g, '%2E')
+  ].join('.');
+  return body + '.' + await hmac(secret, body);
+}
+
+// Returns the signed numbers, or null if the proof is malformed or forged.
+async function openProof(proof, secret) {
+  if (typeof proof !== 'string' || proof.length === 0 || proof.length > 300) return null;
+  const cut = proof.lastIndexOf('.');
+  if (cut < 0) return null;
+  const body = proof.slice(0, cut);
+  const sig = proof.slice(cut + 1);
+  if (!safeEqual(await hmac(secret, body), sig)) return null;
+
+  const f = body.split('.');
+  let t; // raw fields, normalised across proof versions
+  if (f[0] === '2' && f.length === 13) {
+    t = { commits: f[3], restricted: f[4], prs: f[5], issues: f[6], total: f[7],
+          stars: f[8], followers: f[9], streak: f[10], gap: f[11], lang: f[12] };
+  } else if (f[0] === '1' && f.length === 11) {
+    t = { commits: f[3], restricted: null, prs: f[4], issues: f[5], total: null,
+          stars: f[6], followers: f[7], streak: f[8], gap: f[9], lang: f[10] };
+  } else {
+    return null;
+  }
+  let lang;
+  try { lang = decodeURIComponent(t.lang); } catch (e) { return null; }
+  const num = s => parseInt(s, 36);
+  const opt = s => (s === null ? null : num(s));
+  return {
+    login: f[1],
+    issuedAt: new Date(num(f[2]) * 1000).toISOString(),
+    commits: num(t.commits),
+    restricted: opt(t.restricted),
+    prs: num(t.prs),
+    issues: num(t.issues),
+    totalContributions: opt(t.total),
+    stars: num(t.stars),
+    followers: num(t.followers),
+    streak: num(t.streak),
+    longestGap: num(t.gap),
+    topLanguage: lang || null
+  };
+}
+
+async function handleVerify(url, env, cors) {
+  if (!env.TICKET_SECRET) return jsonResponse({ error: 'VERIFY_NOT_CONFIGURED' }, 500, cors);
+  const ticket = await openProof(url.searchParams.get('p'), env.TICKET_SECRET);
+  return jsonResponse(ticket ? { valid: true, ticket } : { valid: false }, 200, cors);
+}
+
 async function buildContribution(login, env, rate) {
   const now = new Date();
-  const from = new Date(now.getTime() - WINDOW_DAYS * 86400000);
+  // Window = the last WINDOW_DAYS UTC dates, today included: it starts at 00:00 UTC
+  // of (today - (WINDOW_DAYS - 1)). "now - 90 days" gave 91 calendar days and cut the
+  // first day at the current time of day, so the typed totals (commits, PRs, ...) and
+  // the per-day calendar did not cover exactly the same days.
+  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const from = new Date(todayUtc - (WINDOW_DAYS - 1) * 86400000);
 
   const user = await graphql(env, PROFILE_QUERY, {
     login,
@@ -209,7 +342,11 @@ async function buildContribution(login, env, rate) {
     prs: cc.totalPullRequestContributions,
     issues: cc.totalIssueContributions,
     reviews: cc.totalPullRequestReviewContributions,
+    restricted: cc.restrictedContributionsCount || 0,
     totalContributions: cc.contributionCalendar.totalContributions,
+    streak: computeLongestStreak(days),
+    longestGap: computeLongestGap(days, now),
+    generatedAt: Math.floor(now.getTime() / 1000),
     days
   };
 }
@@ -220,7 +357,7 @@ async function handleContrib(login, env, ctx, cors) {
   }
 
   const cache = (typeof caches !== 'undefined') ? caches.default : null;
-  const cacheKey = new Request(`https://commit-ticket-cache.invalid/contrib/${login.toLowerCase()}`);
+  const cacheKey = new Request(`https://commit-ticket-cache.invalid/v2/contrib/${login.toLowerCase()}`);
 
   if (cache) {
     const hit = await cache.match(cacheKey);
@@ -235,6 +372,7 @@ async function handleContrib(login, env, ctx, cors) {
   const rate = {};
   try {
     const data = await buildContribution(login, env, rate);
+    if (env.TICKET_SECRET) data.proof = await signTicket(data, env.TICKET_SECRET);
     const body = JSON.stringify(data);
 
     if (cache && ctx && ctx.waitUntil) {
@@ -296,6 +434,10 @@ export default {
     }
 
     const url = new URL(request.url);
+
+    if (url.pathname === '/verify') {
+      return handleVerify(url, env, cors);
+    }
 
     const m = url.pathname.match(/^\/contrib\/([A-Za-z0-9-]{1,39})$/);
     if (m) {
