@@ -37,7 +37,7 @@ No account, no OAuth, no database. Type a username, print the ticket.
 | --- | --- |
 | **Activity percentile** | Your rank against public profiles over the last 90 days (see [How the percentile works](#how-the-percentile-works)) |
 | **Rank stamp** | A stamp derived from the percentile (`WARMING UP`, `HEAVY SHIPPER`, …) |
-| **Commits shipped** | Commit contributions in the 90-day window |
+| **Contributions** | Total contributions over the 90-day window, as counted by GitHub's contribution graph (the same figure as on the profile) |
 | **Day streak** | Longest run of consecutive active days in the window |
 | **Top language** | Most frequent primary language across public, non-fork repositories |
 | **Stars earned** | Total stars across public, non-fork repositories |
@@ -73,13 +73,15 @@ The percentile is **an estimate, not an official GitHub statistic.** It adapts t
 
 | Metric | Weight | Reference median | Curve |
 | --- | :---: | :---: | --- |
-| Commits | 2 | 65 | exponential |
+| Commits (public commits + private contributions\*) | 2 | 65 | exponential |
 | Pull requests | 3 | 12 | exponential |
 | Issues | 1 | 6 | exponential |
 | Stars | 4 | 50 | log-normal |
 | Followers | 1 | 10 | log-normal |
 
 Commit, PR and issue medians are scaled down from their annual baselines to fit the 90-day window. Code reviews are collected but not part of the score.
+
+\* Private contributions reach the Worker as a bare count (GitHub hides their type and content) and are counted as commits. This is Commit Ticket's own adaptation and is not part of the github-readme-stats method. They are included only when the user has chosen to show private contributions on their profile.
 
 ## Architecture
 
@@ -117,12 +119,17 @@ Commit, PR and issue medians are scaled down from their annual baselines to fit 
   "stars": 420,
   "topLanguage": "JavaScript",
   "windowDays": 90,
-  "commits": 33,
+  "commits": 30,              // commit contributions visible to the Worker's token
+  "restricted": 4,            // private contributions (count only; 0 unless the user shows them)
   "prs": 4,
-  "issues": 2,
+  "issues": 1,
   "reviews": 1,
-  "totalContributions": 40,
-  "days": [{ "date": "2026-07-20", "count": 3 }]
+  "totalContributions": 40,   // same figure as the contribution graph
+  "streak": 7,                // longest run of active days in the window
+  "longestGap": 22,           // longest run of idle days in the window
+  "generatedAt": 1792411159,  // Unix time, seconds
+  "proof": "2.octocat....",   // signed snapshot, only when TICKET_SECRET is set
+  "days": [{ "date": "2026-07-22", "count": 3 }]   // 90 UTC days, today included
 }
 ```
 
@@ -133,15 +140,18 @@ Commit, PR and issue medians are scaled down from their annual baselines to fit 
 | 403 | `RATE_LIMIT` | GitHub rate limit reached (reset time exposed via `x-ratelimit-reset`) |
 | 500 | `SERVER_TOKEN_MISSING` | `GITHUB_TOKEN` secret not configured |
 | 502 | `UPSTREAM` | GitHub returned an unexpected error |
+| 500 | `VERIFY_NOT_CONFIGURED` | `/verify` called while `TICKET_SECRET` is not set |
 
 Responses include an `X-Cache: HIT | MISS` header.
+
+`GET /verify?p=<proof>` checks a signed snapshot. The `proof` returned by `/contrib` contains the ticket's key numbers, signed with HMAC-SHA256 using a secret only the Worker knows. `/verify` answers `{ "valid": true, "ticket": { ... } }` with the original signed numbers, or `{ "valid": false }` if the proof was altered. Proofs are only issued when `TICKET_SECRET` is set. The `index.html` in this repository does not use them yet.
 
 ## Privacy
 
 - **No sign-in.** Only public GitHub data is read.
 - **No database, no cookies, no analytics of your lookups.** The browser keeps a short in-memory cache (10 min) that disappears when you close the tab — nothing is written to `localStorage`.
 - The Worker caches each response at Cloudflare's edge for **10 minutes** to save quota.
-- Private repositories are never queried.
+- Private repositories are never queried: the Worker's token has no scopes. Private contributions are included only as a bare count (GitHub's `restrictedContributionsCount`), and only for users who chose to show them on their profile.
 
 ## Run it yourself
 
@@ -150,7 +160,8 @@ Responses include an `X-Cache: HIT | MISS` header.
 1. Create a new Worker and paste in [`github-proxy-worker.js`](./github-proxy-worker.js).
 2. Create a GitHub **classic personal access token with no scopes ticked** (GraphQL requires an authenticated request; public data needs no scope).
 3. In the Worker: **Settings → Variables and Secrets → add secret `GITHUB_TOKEN`** with that token.
-4. Edit `ALLOWED_ORIGINS` at the top of the file so only your own domain can use the proxy:
+4. Optional: add a second secret `TICKET_SECRET` (a random string of 40+ characters, never changed afterwards) to enable signed proofs and `/verify`.
+5. Edit `ALLOWED_ORIGINS` at the top of the file so only your own domain can use the proxy:
 
    ```js
    const ALLOWED_ORIGINS = [
