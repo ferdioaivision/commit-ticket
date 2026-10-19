@@ -341,7 +341,7 @@
 
   <div class="eyebrow"><span class="prompt">$</span>git wrapped --live<span class="cursor" aria-hidden="true"></span></div>
   <h1>Your commits,<br><span>itemized.</span></h1>
-  <p class="sub">Drop a public GitHub username. We pull the last 90 days of public activity and print a ticket — ranked against real public profiles, using the percentile method behind the open-source project <strong>github-readme-stats</strong>.</p>
+  <p class="sub">Drop a public GitHub username. We pull the last 90 days of GitHub contributions and print a ticket — ranked against real public profiles, using the percentile method behind the open-source project <strong>github-readme-stats</strong>.</p>
 
   <label for="username" class="visually-hidden">GitHub username</label>
   <div class="input-row">
@@ -387,7 +387,7 @@
       <div class="headline" id="prev-headline"><span class="gt">&gt;</span>loading…</div>
 
       <div class="diffstats">
-        <div class="diffline add"><span class="sym">+</span><span class="val" id="prev-commits">—</span><span class="lbl">commits shipped</span></div>
+        <div class="diffline add"><span class="sym">+</span><span class="val" id="prev-contrib">—</span><span class="lbl">contributions</span></div>
         <div class="diffline add"><span class="sym">+</span><span class="val" id="prev-streak">—</span><span class="lbl">day streak</span></div>
         <div class="diffline amber"><span class="sym">*</span><span class="val" id="prev-lang">—</span><span class="lbl">top language</span></div>
         <div class="diffline add"><span class="sym">+</span><span class="val" id="prev-stars">—</span><span class="lbl">stars earned</span></div>
@@ -417,7 +417,7 @@
 
   <footer>
     <div class="credit">Built by <a href="https://shiprelease.vercel.app" target="_blank" rel="noopener">Ferdio Ai Vision</a> · <a href="#" id="repoLink">view source on GitHub</a></div>
-    <div class="method">Percentile estimated from public commits, pull requests, issues, stars and followers over the last 90 days, weighted with the exponential / log-normal ranking method popularized by github-readme-stats. Not an official GitHub statistic.</div>
+    <div class="method">Percentile estimated from commits, pull requests, issues, stars and followers over the last 90 days, weighted with the exponential / log-normal ranking method popularized by github-readme-stats. Private contributions are included only as a count, and only when the user shows them on their GitHub profile (GitHub never exposes their content); they are counted as commits, which is an approximation. Not an official GitHub statistic.</div>
   </footer>
 
   <!-- Off-screen 1080x1920 export composition, captured by html2canvas on download -->
@@ -456,7 +456,7 @@
         <div class="headline" id="exp-headline"></div>
 
         <div class="diffstats">
-          <div class="diffline add"><span class="sym">+</span><span class="val" id="exp-commits">—</span><span class="lbl">commits shipped</span></div>
+          <div class="diffline add"><span class="sym">+</span><span class="val" id="exp-contrib">—</span><span class="lbl">contributions</span></div>
           <div class="diffline add"><span class="sym">+</span><span class="val" id="exp-streak">—</span><span class="lbl">day streak</span></div>
           <div class="diffline amber"><span class="sym">*</span><span class="val" id="exp-lang">—</span><span class="lbl">top language</span></div>
           <div class="diffline add"><span class="sym">+</span><span class="val" id="exp-stars">—</span><span class="lbl">stars earned</span></div>
@@ -491,11 +491,10 @@
   const REPO_URL = 'https://github.com/ferdioaivision/commit-ticket';
   document.getElementById('wm-handle').textContent = BRAND.handle;
 
-  // GitHub's unauthenticated API caps every visitor's network at 60 requests/hour.
-  // Deploy the included Cloudflare Worker proxy (see github-proxy-worker.js) and
-  // point API_BASE at it to raise that to 5000/hour, shared across all visitors.
-  // Until then this talks to api.github.com directly — works out of the box,
-  // just easier to exhaust on a shared wifi/VPN or while testing repeatedly.
+  // Cloudflare Worker proxy (see github-proxy-worker.js). It queries GitHub's GraphQL
+  // API with a server-side token, so visitors share one 5000/hour quota instead of the
+  // 60/hour per-IP limit of unauthenticated calls. Point API_BASE at your own Worker.
+  const WINDOW_DAYS = 90; // must match WINDOW_DAYS in the Worker
   const API_BASE = 'https://commit-ticket-proxy.ferdioaivision.workers.dev';
 
   const usernameInput = document.getElementById('username');
@@ -766,7 +765,7 @@
     document.getElementById(`${prefix}-age`).textContent = data.age;
     document.getElementById(`${prefix}-stamp`).innerHTML = rankTitleFor(data.percentile).replace('\n', '<br>');
     document.getElementById(`${prefix}-headline`).innerHTML = headlineFor(data.percentile);
-    document.getElementById(`${prefix}-commits`).textContent = data.commits.toLocaleString('en-US');
+    document.getElementById(`${prefix}-contrib`).textContent = data.contributions.toLocaleString('en-US');
     document.getElementById(`${prefix}-streak`).textContent = data.streak + 'd';
     document.getElementById(`${prefix}-lang`).textContent = data.topLanguage;
     document.getElementById(`${prefix}-stars`).textContent = data.stars.toLocaleString('en-US');
@@ -774,7 +773,7 @@
     document.getElementById(`${prefix}-repos`).textContent = data.publicRepos + ' repos';
     document.getElementById(`${prefix}-serial`).textContent = data.serial;
     document.getElementById(`${prefix}-genstamp`).textContent = data.generatedAt;
-    renderHeatmap(document.getElementById(`${prefix}-heatmap`), data.dayCounts, 91);
+    renderHeatmap(document.getElementById(`${prefix}-heatmap`), data.dayCounts, WINDOW_DAYS);
     renderBarcode(document.getElementById(`${prefix}-barcode`), data.login, prefix === 'exp' ? 38 : 26);
     animateHero(prefix, data.percentile);
   }
@@ -810,8 +809,9 @@
       const c = await fetchContrib(username);
 
       const dayCounts = buildDayCounts(c.days);
+      // Private contributions arrive as a bare count (type unknown): counted here as commits.
       const percentile = calcPercentile({
-        commits: c.commits,
+        commits: c.commits + (c.restricted || 0),
         prs: c.prs,
         issues: c.issues,
         stars: c.stars,
@@ -822,9 +822,9 @@
         login: c.login,
         name: c.name,
         avatarUrl: c.avatarUrl,
-        commits: c.commits,
+        contributions: c.totalContributions,
         streak: computeLongestStreak(dayCounts),
-        longestGap: computeLongestGap(dayCounts, 91),
+        longestGap: computeLongestGap(dayCounts, WINDOW_DAYS),
         dayCounts,
         topLanguage: c.topLanguage || '—',
         stars: c.stars,
