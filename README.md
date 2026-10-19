@@ -27,7 +27,7 @@ Commit Ticket turns a public GitHub profile into a **ticket**: an activity perce
 No account, no OAuth, no database. Type a username, print the ticket.
 
 <div align="center">
-<img width="1720" height="2916" alt="commit-ticket-ferdioaivision" src="https://github.com/user-attachments/assets/8cd14fe9-b312-41c2-9aaf-b2e0ad54bee7" />
+<img width="1720" height="2916" alt="commit-ticket-ferdioaivision" src="https://github.com/user-attachments/assets/8a3871b4-e651-42e1-9743-cf6151b0b62e" />
 
 
 </div>
@@ -42,6 +42,7 @@ No account, no OAuth, no database. Type a username, print the ticket.
 | **Day streak** | Longest run of consecutive active days in the window |
 | **Top language** | Most frequent primary language across public, non-fork repositories |
 | **Stars earned** | Total stars across public, non-fork repositories |
+| **Public repos** | Number of public repositories on the account, forks included (shown next to the heatmap). GitHub does not expose the number of private repositories of an account, so it cannot be shown |
 | **Days idle, longest gap** | Longest run of days with zero contributions (the one "deletion" line) |
 | **Activity heatmap** | One cell per day, 90 days, GitHub-style green scale |
 | **Serial number & barcode** | Deterministic, seeded from the username — decorative only, never a metric |
