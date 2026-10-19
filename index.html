@@ -770,7 +770,7 @@
     document.getElementById(`${prefix}-lang`).textContent = data.topLanguage;
     document.getElementById(`${prefix}-stars`).textContent = data.stars.toLocaleString('en-US');
     document.getElementById(`${prefix}-idle`).textContent = data.longestGap;
-    document.getElementById(`${prefix}-repos`).textContent = data.publicRepos + ' repos';
+    document.getElementById(`${prefix}-repos`).textContent = data.publicRepos + ' public repos';
     document.getElementById(`${prefix}-serial`).textContent = data.serial;
     document.getElementById(`${prefix}-genstamp`).textContent = data.generatedAt;
     renderHeatmap(document.getElementById(`${prefix}-heatmap`), data.dayCounts, WINDOW_DAYS);
